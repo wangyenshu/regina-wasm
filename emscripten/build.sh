@@ -130,12 +130,13 @@ fi
     if [[ ! -f "$AUX_PREFIX/lib/liblmdb.a" ]]; then
         echo "Building LMDB for WebAssembly..."
         
-        emmake make liblmdb.a lmdb.pc CC=emcc AR=emar prefix="$AUX_PREFIX"
+        emmake make liblmdb.a CC=emcc AR=emar prefix="$AUX_PREFIX"
         
         cp liblmdb.a "$AUX_PREFIX/lib/"
         cp lmdb.h "$AUX_PREFIX/include/"
+        
         mkdir -p "$AUX_PREFIX/lib/pkgconfig"
-        cp emscripten/lmdb.pc "$AUX_PREFIX/lib/pkgconfig/"
+        cp "$BASEDIR/emscripten/lmdb.pc" "$AUX_PREFIX/lib/pkgconfig/"
     fi
 )
 
@@ -211,6 +212,21 @@ if ! grep -q "std::shared_ptr<regina::Packet>, std::shared_ptr<regina::Packet>" 
     sed -i 's/regina::Packet\*, regina::Packet\*/std::shared_ptr<regina::Packet>, std::shared_ptr<regina::Packet>/g' qtui/src/pythonmanager.cpp
 fi
 
+if ! grep -q "qt_wasm_flags.cmake" qtui/src/CMakeLists.txt; then
+    echo 'include(${CMAKE_SOURCE_DIR}/emscripten/qt_wasm_flags.cmake)' >> qtui/src/CMakeLists.txt
+fi
+
+if [[ -f emscripten/qt_wasm_flags.cmake ]]; then
+    sed -i 's/-sERROR_ON_UNDEFINED_SYMBOLS=1//g' emscripten/qt_wasm_flags.cmake
+fi
+
+if ! grep -q "constexpr QEvent::Type" qtui/src/eventids.h; then
+    sed -i 's/enum {/#include <QEvent>/g' qtui/src/eventids.h
+    sed -i 's/EVT_TREE_CHILD_ADDED = 2200,/constexpr QEvent::Type EVT_TREE_CHILD_ADDED = static_cast<QEvent::Type>(2200);/g' qtui/src/eventids.h
+    sed -i 's/EVT_PLUG_PACKET_MENU = 3001/constexpr QEvent::Type EVT_PLUG_PACKET_MENU = static_cast<QEvent::Type>(3001);/g' qtui/src/eventids.h
+    sed -i 's/};/\/\/ Anonymous enum removed/g' qtui/src/eventids.h
+fi
+
 mkdir -p build-wasm
 cd build-wasm
 
@@ -219,7 +235,7 @@ export PKG_CONFIG_PATH="$AUX_PREFIX/lib/pkgconfig:$AUX_PREFIX/share/pkgconfig"
 # Define WebAssembly flags (Enabling Pthreads, Exceptions, and Emscripten ports)
 WASM_CXXFLAGS="-O2 -fexceptions -pthread"
 # -s USE_ZLIB=1 and -s USE_FREETYPE=1 instruct Emscripten to automatically inject its own compiled versions of these common libraries.
-WASM_LDFLAGS="-O2 -fexceptions -pthread -s WASM=1 -s TOTAL_STACK=64mb -s INITIAL_MEMORY=2048mb -s ALLOW_MEMORY_GROWTH=1 -s USE_ZLIB=1 -s USE_FREETYPE=1"
+WASM_LDFLAGS="-O2 -fexceptions -pthread -s WASM=1 -s TOTAL_STACK=64mb -s INITIAL_MEMORY=2048mb -s ALLOW_MEMORY_GROWTH=1 -s USE_ZLIB=1 -s USE_FREETYPE=1 -lembind"
 
 # Configure Regina using Emscripten's CMake wrapper
 if [[ ! -f Makefile ]]; then
