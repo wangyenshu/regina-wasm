@@ -20,13 +20,10 @@ for tool in cmake pkg-config doxygen xsltproc python3 hg autoconf automake libto
     fi
 done
 
-# ==============================================================================
-# TOOLCHAIN SETUP: Emscripten & Qt 6
-# ==============================================================================
 EMSDK_VERSION="4.0.7"
 QT_VERSION="6.11.1"
 
-# --- Emscripten SDK ---
+# --- Install Emscripten SDK ---
 if [[ ! -d "$EXTERN_DIR/emsdk" ]]; then
     echo "Downloading Emscripten SDK..."
     git clone https://github.com/emscripten-core/emsdk.git "$EXTERN_DIR/emsdk"
@@ -40,12 +37,10 @@ if [[ ! -f ".emsdk_version" ]] || [[ $(<".emsdk_version") != "$EMSDK_VERSION" ]]
     echo "$EMSDK_VERSION" > ".emsdk_version"
 fi
 
-# Source Emscripten into the current shell so 'emcmake' and 'emmake' become available
 source "$EXTERN_DIR/emsdk/emsdk_env.sh"
 cd "$BASEDIR"
 
-# --- Qt 6 WebAssembly SDK ---
-# We use aqtinstall to download pre-compiled Qt binaries instead of building Qt from source.
+# --- Install Qt 6 WebAssembly SDK ---
 QT_INSTALL_DIR="$EXTERN_DIR/qt"
 QT_HOST_DIR="$QT_INSTALL_DIR/$QT_VERSION/gcc_64"
 QT_WASM_DIR="$QT_INSTALL_DIR/$QT_VERSION/wasm_multithread"
@@ -60,12 +55,9 @@ if [[ ! -d "$QT_WASM_DIR" ]]; then
     python3 -m aqt install-qt all_os wasm "$QT_VERSION" wasm_multithread -O "$QT_INSTALL_DIR"
 fi
 
-
-# ==============================================================================
 # DEPENDENCIES
-# ==============================================================================
 
-# GMP
+# --- GMP ---
 (
     mkdir -p "$AUX_BUILD/gmp"
     cd "$AUX_BUILD/gmp"
@@ -85,7 +77,7 @@ fi
     emmake make install
 )
 
-# libxml2
+# --- libxml2 ---
 (
     mkdir -p "$AUX_BUILD/libxml2"
     cd "$AUX_BUILD/libxml2"
@@ -153,7 +145,7 @@ EOF
     fi
 )
 
-# --- liblzma (xz utils) ---
+# --- liblzma ---
 (
     mkdir -p "$AUX_BUILD/xz"
     cd "$AUX_BUILD/xz"
@@ -191,9 +183,8 @@ EOF
 
 
 
-# ==============================================================================
+
 # REGINA CONFIGURATION & BUILD
-# ==============================================================================
 echo "Configuring Regina for WebAssembly..."
 
 if ! grep -q "censusdata_DATA_DISABLED" engine/data/census/CMakeLists.txt; then
@@ -240,17 +231,46 @@ if ! grep -q "constexpr QEvent::Type" qtui/src/eventids.h; then
     sed -i 's/};/\/\/ Anonymous enum removed/g' qtui/src/eventids.h
 fi
 
+# Generate a C++ stub to bridge C++20 Requires clause mangling mismatches
+cat > qtui/src/wasm_patch.cpp <<'EOF'
+extern "C" {
+    void _ZN6regina4FaceILi3ELi0EE11destroyLinkEv();
+    void _ZN6regina4FaceILi3ELi0EE11destroyLinkEvQaaclL_ZNS_11standardDimEiET_EgemiT_T0_Li3E() { _ZN6regina4FaceILi3ELi0EE11destroyLinkEv(); }
+    
+    void _ZN6regina4FaceILi4ELi0EE11destroyLinkEv();
+    void _ZN6regina4FaceILi4ELi0EE11destroyLinkEvQaaclL_ZNS_11standardDimEiET_EgemiT_T0_Li3E() { _ZN6regina4FaceILi4ELi0EE11destroyLinkEv(); }
+    
+    void _ZN6regina4FaceILi4ELi1EE11destroyLinkEv();
+    void _ZN6regina4FaceILi4ELi1EE11destroyLinkEvQaaclL_ZNS_11standardDimEiET_EgemiT_T0_Li3E() { _ZN6regina4FaceILi4ELi1EE11destroyLinkEv(); }
+    
+    void _ZNK6regina4FaceILi3ELi0EE9buildLinkEv();
+    void _ZNK6regina4FaceILi3ELi0EE9buildLinkEvQaaclL_ZNS_11standardDimEiET_EgemiT_T0_Li3E() { _ZNK6regina4FaceILi3ELi0EE9buildLinkEv(); }
+    
+    void _ZNK6regina4FaceILi4ELi0EE9buildLinkEv();
+    void _ZNK6regina4FaceILi4ELi0EE9buildLinkEvQaaclL_ZNS_11standardDimEiET_EgemiT_T0_Li3E() { _ZNK6regina4FaceILi4ELi0EE9buildLinkEv(); }
+    
+    void _ZNK6regina4FaceILi4ELi1EE9buildLinkEv();
+    void _ZNK6regina4FaceILi4ELi1EE9buildLinkEvQaaclL_ZNS_11standardDimEiET_EgemiT_T0_Li3E() { _ZNK6regina4FaceILi4ELi1EE9buildLinkEv(); }
+    
+    void _ZNK6regina4FaceILi4ELi1EE18buildLinkInclusionEv();
+    void _ZNK6regina4FaceILi4ELi1EE18buildLinkInclusionEvQaaclL_ZNS_11standardDimEiET_EgemiT_T0_Li3E() { _ZNK6regina4FaceILi4ELi1EE18buildLinkInclusionEv(); }
+}
+EOF
+
+# Link the patch file exclusively to the GUI target
+if ! grep -q "wasm_patch.cpp" qtui/src/CMakeLists.txt; then
+    echo 'target_sources(regina-gui PRIVATE wasm_patch.cpp)' >> qtui/src/CMakeLists.txt
+fi
+
 mkdir -p build-wasm
 cd build-wasm
 
 export PKG_CONFIG_PATH="$AUX_PREFIX/lib/pkgconfig:$AUX_PREFIX/share/pkgconfig"
 
-# Define WebAssembly flags (Enabling Pthreads, Exceptions, and Emscripten ports)
 WASM_CXXFLAGS="-O2 -fexceptions -pthread"
-# -s USE_ZLIB=1 and -s USE_FREETYPE=1 instruct Emscripten to automatically inject its own compiled versions of these common libraries.
-WASM_LDFLAGS="-O2 -fexceptions -pthread -s WASM=1 -s TOTAL_STACK=64mb -s INITIAL_MEMORY=2048mb -s ALLOW_MEMORY_GROWTH=1 -s USE_ZLIB=1 -s USE_FREETYPE=1 -lembind"
 
-# Configure Regina using Emscripten's CMake wrapper
+WASM_LDFLAGS="-O2 -fexceptions -pthread -s WASM=1 -s TOTAL_STACK=64mb -s INITIAL_MEMORY=2048mb -s ALLOW_MEMORY_GROWTH=1 -s USE_ZLIB=1 -s USE_FREETYPE=1 -lembind -L$AUX_PREFIX/lib"
+
 if [[ ! -f Makefile ]]; then
     rm -f CMakeCache.txt
     emcmake cmake .. \
@@ -278,5 +298,5 @@ fi
 echo "Building Regina..."
 emmake make -j8 regina-gui
 
-echo "Build complete. Regina WebAssembly files are located in $(pwd)"
+echo "Build complete."
 cd ..
