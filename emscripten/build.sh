@@ -136,7 +136,20 @@ fi
         cp lmdb.h "$AUX_PREFIX/include/"
         
         mkdir -p "$AUX_PREFIX/lib/pkgconfig"
-        cp "$BASEDIR/emscripten/lmdb.pc" "$AUX_PREFIX/lib/pkgconfig/"
+        # Generate lmdb.pc inline so the prefix always matches this checkout,
+        # instead of relying on a static template file with a baked-in path.
+        cat > "$AUX_PREFIX/lib/pkgconfig/lmdb.pc" <<EOF
+prefix=$AUX_PREFIX
+exec_prefix=\${prefix}
+includedir=\${prefix}/include
+libdir=\${prefix}/lib
+
+Name: lmdb
+Description: Lightning Memory-Mapped Database
+Version: 0.9.31
+Cflags: -I\${includedir}
+Libs: -L\${libdir} -llmdb
+EOF
     fi
 )
 
